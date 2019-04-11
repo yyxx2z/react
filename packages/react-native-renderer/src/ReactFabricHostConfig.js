@@ -14,17 +14,15 @@ import type {
   NativeMethodsMixinType,
   ReactNativeBaseComponentViewConfig,
 } from './ReactNativeTypes';
+import type {ReactEventComponentInstance} from 'shared/ReactTypes';
 
-import {
-  mountSafeCallback_NOT_REALLY_SAFE,
-  warnForStyleProps,
-} from './NativeMethodsMixinUtils';
-import * as ReactNativeAttributePayload from './ReactNativeAttributePayload';
-import * as ReactNativeFrameScheduling from './ReactNativeFrameScheduling';
-import * as ReactNativeViewConfigRegistry from 'ReactNativeViewConfigRegistry';
+import {mountSafeCallback_NOT_REALLY_SAFE} from './NativeMethodsMixinUtils';
+import {create, diff} from './ReactNativeAttributePayload';
+import {get as getViewConfigForType} from 'ReactNativeViewConfigRegistry';
 
 import deepFreezeAndThrowOnMutationInDev from 'deepFreezeAndThrowOnMutationInDev';
 import invariant from 'shared/invariant';
+import warningWithoutStack from 'shared/warningWithoutStack';
 
 import {dispatchEvent} from './ReactFabricEventEmitter';
 
@@ -41,8 +39,10 @@ import {
   appendChildToSet as appendChildNodeToSet,
   completeRoot,
   registerEventHandler,
+  measure as fabricMeasure,
+  measureInWindow as fabricMeasureInWindow,
+  measureLayout as fabricMeasureLayout,
 } from 'FabricUIManager';
-import UIManager from 'UIManager';
 
 // Counter for uniquely identifying views.
 // % 10 === 1 means it is a rootTag.
@@ -87,15 +87,18 @@ class ReactFabricHostComponent {
   _nativeTag: number;
   viewConfig: ReactNativeBaseComponentViewConfig<>;
   currentProps: Props;
+  _internalInstanceHandle: Object;
 
   constructor(
     tag: number,
     viewConfig: ReactNativeBaseComponentViewConfig<>,
     props: Props,
+    internalInstanceHandle: Object,
   ) {
     this._nativeTag = tag;
     this.viewConfig = viewConfig;
     this.currentProps = props;
+    this._internalInstanceHandle = internalInstanceHandle;
   }
 
   blur() {
@@ -107,52 +110,51 @@ class ReactFabricHostComponent {
   }
 
   measure(callback: MeasureOnSuccessCallback) {
-    UIManager.measure(
-      this._nativeTag,
+    fabricMeasure(
+      this._internalInstanceHandle.stateNode.node,
       mountSafeCallback_NOT_REALLY_SAFE(this, callback),
     );
   }
 
   measureInWindow(callback: MeasureInWindowOnSuccessCallback) {
-    UIManager.measureInWindow(
-      this._nativeTag,
+    fabricMeasureInWindow(
+      this._internalInstanceHandle.stateNode.node,
       mountSafeCallback_NOT_REALLY_SAFE(this, callback),
     );
   }
 
   measureLayout(
-    relativeToNativeNode: number,
+    relativeToNativeNode: number | Object,
     onSuccess: MeasureLayoutOnSuccessCallback,
     onFail: () => void /* currently unused */,
   ) {
-    UIManager.measureLayout(
-      this._nativeTag,
-      relativeToNativeNode,
+    if (
+      typeof relativeToNativeNode === 'number' ||
+      !(relativeToNativeNode instanceof ReactFabricHostComponent)
+    ) {
+      warningWithoutStack(
+        false,
+        'Warning: ref.measureLayout must be called with a ref to a native component.',
+      );
+
+      return;
+    }
+
+    fabricMeasureLayout(
+      this._internalInstanceHandle.stateNode.node,
+      relativeToNativeNode._internalInstanceHandle.stateNode.node,
       mountSafeCallback_NOT_REALLY_SAFE(this, onFail),
       mountSafeCallback_NOT_REALLY_SAFE(this, onSuccess),
     );
   }
 
   setNativeProps(nativeProps: Object) {
-    if (__DEV__) {
-      warnForStyleProps(nativeProps, this.viewConfig.validAttributes);
-    }
-
-    const updatePayload = ReactNativeAttributePayload.create(
-      nativeProps,
-      this.viewConfig.validAttributes,
+    warningWithoutStack(
+      false,
+      'Warning: setNativeProps is not currently supported in Fabric',
     );
 
-    // Avoid the overhead of bridge calls if there's no update.
-    // This is an expensive no-op for Android, and causes an unnecessary
-    // view invalidation for certain components (eg RCTTextInput) on iOS.
-    if (updatePayload != null) {
-      UIManager.updateView(
-        this._nativeTag,
-        this.viewConfig.uiViewClassName,
-        updatePayload,
-      );
-    }
+    return;
   }
 }
 
@@ -179,7 +181,7 @@ export function createInstance(
   const tag = nextReactTag;
   nextReactTag += 2;
 
-  const viewConfig = ReactNativeViewConfigRegistry.get(type);
+  const viewConfig = getViewConfigForType(type);
 
   if (__DEV__) {
     for (const key in viewConfig.validAttributes) {
@@ -194,10 +196,7 @@ export function createInstance(
     'Nesting of <View> within <Text> is not currently supported.',
   );
 
-  const updatePayload = ReactNativeAttributePayload.create(
-    props,
-    viewConfig.validAttributes,
-  );
+  const updatePayload = create(props, viewConfig.validAttributes);
 
   const node = createNode(
     tag, // reactTag
@@ -207,7 +206,12 @@ export function createInstance(
     internalInstanceHandle, // internalInstanceHandle
   );
 
-  const component = new ReactFabricHostComponent(tag, viewConfig, props);
+  const component = new ReactFabricHostComponent(
+    tag,
+    viewConfig,
+    props,
+    internalInstanceHandle,
+  );
 
   return {
     node: node,
@@ -278,6 +282,21 @@ export function getChildHostContext(
   }
 }
 
+export function getChildHostContextForEventComponent(
+  parentHostContext: HostContext,
+) {
+  // TODO: add getChildHostContextForEventComponent implementation
+  return parentHostContext;
+}
+
+export function getChildHostContextForEventTarget(
+  parentHostContext: HostContext,
+  type: Symbol | number,
+) {
+  // TODO: add getChildHostContextForEventTarget implementation
+  return parentHostContext;
+}
+
 export function getPublicInstance(instance: Instance): * {
   return instance.canonical;
 }
@@ -295,11 +314,7 @@ export function prepareUpdate(
   hostContext: HostContext,
 ): null | Object {
   const viewConfig = instance.canonical.viewConfig;
-  const updatePayload = ReactNativeAttributePayload.diff(
-    oldProps,
-    newProps,
-    viewConfig.validAttributes,
-  );
+  const updatePayload = diff(oldProps, newProps, viewConfig.validAttributes);
   // TODO: If the event handlers have changed, we need to update the current props
   // in the commit phase but there is no host config hook to do it yet.
   // So instead we hack it by updating it in the render phase.
@@ -327,12 +342,6 @@ export function shouldSetTextContent(type: string, props: Props): boolean {
 
 // The Fabric renderer is secondary to the existing React Native renderer.
 export const isPrimaryRenderer = false;
-export const now = ReactNativeFrameScheduling.now;
-export const scheduleDeferredCallback =
-  ReactNativeFrameScheduling.scheduleDeferredCallback;
-export const cancelDeferredCallback =
-  ReactNativeFrameScheduling.cancelDeferredCallback;
-export const shouldYield = ReactNativeFrameScheduling.shouldYield;
 
 export const scheduleTimeout = setTimeout;
 export const cancelTimeout = clearTimeout;
@@ -383,7 +392,7 @@ export function cloneHiddenInstance(
 ): Instance {
   const viewConfig = instance.canonical.viewConfig;
   const node = instance.node;
-  const updatePayload = ReactNativeAttributePayload.create(
+  const updatePayload = create(
     {style: {display: 'none'}},
     viewConfig.validAttributes,
   );
@@ -393,29 +402,9 @@ export function cloneHiddenInstance(
   };
 }
 
-export function cloneUnhiddenInstance(
+export function cloneHiddenTextInstance(
   instance: Instance,
-  type: string,
-  props: Props,
-  internalInstanceHandle: Object,
-): Instance {
-  const viewConfig = instance.canonical.viewConfig;
-  const node = instance.node;
-  const updatePayload = ReactNativeAttributePayload.diff(
-    {...props, style: [props.style, {display: 'none'}]},
-    props,
-    viewConfig.validAttributes,
-  );
-  return {
-    node: cloneNodeWithNewProps(node, updatePayload),
-    canonical: instance.canonical,
-  };
-}
-
-export function createHiddenTextInstance(
   text: string,
-  rootContainerInstance: Container,
-  hostContext: HostContext,
   internalInstanceHandle: Object,
 ): TextInstance {
   throw new Error('Not yet implemented.');
@@ -443,3 +432,46 @@ export function replaceContainerChildren(
   container: Container,
   newChildren: ChildSet,
 ): void {}
+
+export function mountEventComponent(
+  eventComponentInstance: ReactEventComponentInstance,
+) {
+  throw new Error('Not yet implemented.');
+}
+
+export function updateEventComponent(
+  eventComponentInstance: ReactEventComponentInstance,
+) {
+  throw new Error('Not yet implemented.');
+}
+
+export function unmountEventComponent(
+  eventComponentInstance: ReactEventComponentInstance,
+): void {
+  throw new Error('Not yet implemented.');
+}
+
+export function getEventTargetChildElement(
+  type: Symbol | number,
+  props: Props,
+): null {
+  throw new Error('Not yet implemented.');
+}
+
+export function handleEventTarget(
+  type: Symbol | number,
+  props: Props,
+  rootContainerInstance: Container,
+  internalInstanceHandle: Object,
+): boolean {
+  throw new Error('Not yet implemented.');
+}
+
+export function commitEventTarget(
+  type: Symbol | number,
+  props: Props,
+  instance: Instance,
+  parentInstance: Instance,
+): void {
+  throw new Error('Not yet implemented.');
+}

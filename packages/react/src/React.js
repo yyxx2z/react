@@ -13,7 +13,6 @@ import {
   REACT_STRICT_MODE_TYPE,
   REACT_SUSPENSE_TYPE,
 } from 'shared/ReactSymbols';
-import {enableHooks} from 'shared/ReactFeatureFlags';
 
 import {Component, PureComponent} from './ReactBaseClasses';
 import {createRef} from './ReactCreateRef';
@@ -23,6 +22,7 @@ import {
   createFactory,
   cloneElement,
   isValidElement,
+  jsx,
 } from './ReactElement';
 import {createContext} from './ReactContext';
 import {lazy} from './ReactLazy';
@@ -32,10 +32,10 @@ import {
   useCallback,
   useContext,
   useEffect,
-  useImperativeMethods,
+  useImperativeHandle,
+  useDebugValue,
   useLayoutEffect,
   useMemo,
-  useMutationEffect,
   useReducer,
   useRef,
   useState,
@@ -44,9 +44,16 @@ import {
   createElementWithValidation,
   createFactoryWithValidation,
   cloneElementWithValidation,
+  jsxWithValidation,
+  jsxWithValidationStatic,
+  jsxWithValidationDynamic,
 } from './ReactElementValidator';
 import ReactSharedInternals from './ReactSharedInternals';
-import {enableStableConcurrentModeAPIs} from 'shared/ReactFeatureFlags';
+import {error, warn} from './withComponentStack';
+import {
+  enableStableConcurrentModeAPIs,
+  enableJSXTransformAPI,
+} from 'shared/ReactFeatureFlags';
 
 const React = {
   Children: {
@@ -66,7 +73,22 @@ const React = {
   lazy,
   memo,
 
+  error,
+  warn,
+
+  useCallback,
+  useContext,
+  useEffect,
+  useImperativeHandle,
+  useDebugValue,
+  useLayoutEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+
   Fragment: REACT_FRAGMENT_TYPE,
+  Profiler: REACT_PROFILER_TYPE,
   StrictMode: REACT_STRICT_MODE_TYPE,
   Suspense: REACT_SUSPENSE_TYPE,
 
@@ -77,28 +99,32 @@ const React = {
 
   version: ReactVersion,
 
+  unstable_ConcurrentMode: REACT_CONCURRENT_MODE_TYPE,
+
   __SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED: ReactSharedInternals,
 };
 
+// Note: some APIs are added with feature flags.
+// Make sure that stable builds for open source
+// don't modify the React object to avoid deopts.
+// Also let's not expose their names in stable builds.
+
 if (enableStableConcurrentModeAPIs) {
   React.ConcurrentMode = REACT_CONCURRENT_MODE_TYPE;
-  React.Profiler = REACT_PROFILER_TYPE;
-} else {
-  React.unstable_ConcurrentMode = REACT_CONCURRENT_MODE_TYPE;
-  React.unstable_Profiler = REACT_PROFILER_TYPE;
+  React.unstable_ConcurrentMode = undefined;
 }
 
-if (enableHooks) {
-  React.useCallback = useCallback;
-  React.useContext = useContext;
-  React.useEffect = useEffect;
-  React.useImperativeMethods = useImperativeMethods;
-  React.useLayoutEffect = useLayoutEffect;
-  React.useMemo = useMemo;
-  React.useMutationEffect = useMutationEffect;
-  React.useReducer = useReducer;
-  React.useRef = useRef;
-  React.useState = useState;
+if (enableJSXTransformAPI) {
+  if (__DEV__) {
+    React.jsxDEV = jsxWithValidation;
+    React.jsx = jsxWithValidationDynamic;
+    React.jsxs = jsxWithValidationStatic;
+  } else {
+    React.jsx = jsx;
+    // we may want to special case jsxs internally to take advantage of static children.
+    // for now we can ship identical prod functions
+    React.jsxs = jsx;
+  }
 }
 
 export default React;

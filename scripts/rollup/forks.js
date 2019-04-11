@@ -7,6 +7,9 @@ const inlinedHostConfigs = require('../shared/inlinedHostConfigs');
 const UMD_DEV = bundleTypes.UMD_DEV;
 const UMD_PROD = bundleTypes.UMD_PROD;
 const UMD_PROFILING = bundleTypes.UMD_PROFILING;
+const NODE_DEV = bundleTypes.NODE_DEV;
+const NODE_PROD = bundleTypes.NODE_PROD;
+const NODE_PROFILING = bundleTypes.NODE_PROFILING;
 const FB_WWW_DEV = bundleTypes.FB_WWW_DEV;
 const FB_WWW_PROD = bundleTypes.FB_WWW_PROD;
 const FB_WWW_PROFILING = bundleTypes.FB_WWW_PROFILING;
@@ -68,6 +71,22 @@ const forks = Object.freeze({
   // We have a few forks for different environments.
   'shared/ReactFeatureFlags': (bundleType, entry) => {
     switch (entry) {
+      case 'react-dom/unstable-new-scheduler': {
+        switch (bundleType) {
+          case FB_WWW_DEV:
+          case FB_WWW_PROD:
+          case FB_WWW_PROFILING:
+            return 'shared/forks/ReactFeatureFlags.www-new-scheduler.js';
+          case NODE_DEV:
+          case NODE_PROD:
+          case NODE_PROFILING:
+            return 'shared/forks/ReactFeatureFlags.new-scheduler.js';
+          default:
+            throw Error(
+              `Unexpected entry (${entry}) and bundleType (${bundleType})`
+            );
+        }
+      }
       case 'react-native-renderer':
         switch (bundleType) {
           case RN_FB_DEV:
@@ -88,11 +107,11 @@ const forks = Object.freeze({
           case RN_FB_DEV:
           case RN_FB_PROD:
           case RN_FB_PROFILING:
-            return 'shared/forks/ReactFeatureFlags.native-fabric-fb.js';
+            return 'shared/forks/ReactFeatureFlags.native-fb.js';
           case RN_OSS_DEV:
           case RN_OSS_PROD:
           case RN_OSS_PROFILING:
-            return 'shared/forks/ReactFeatureFlags.native-fabric-oss.js';
+            return 'shared/forks/ReactFeatureFlags.native-oss.js';
           default:
             throw Error(
               `Unexpected entry (${entry}) and bundleType (${bundleType})`
@@ -157,16 +176,27 @@ const forks = Object.freeze({
     }
   },
 
-  // This logic is forked on www to fork the formatting function.
-  'shared/invariant': (bundleType, entry) => {
-    switch (bundleType) {
-      case FB_WWW_DEV:
-      case FB_WWW_PROD:
-      case FB_WWW_PROFILING:
-        return 'shared/forks/invariant.www.js';
-      default:
-        return null;
+  'scheduler/src/SchedulerFeatureFlags': (bundleType, entry, dependencies) => {
+    if (
+      bundleType === FB_WWW_DEV ||
+      bundleType === FB_WWW_PROD ||
+      bundleType === FB_WWW_PROFILING
+    ) {
+      return 'scheduler/src/forks/SchedulerFeatureFlags.www.js';
     }
+    return 'scheduler/src/SchedulerFeatureFlags';
+  },
+
+  'scheduler/src/SchedulerHostConfig': (bundleType, entry, dependencies) => {
+    if (
+      entry === 'scheduler/unstable_mock' ||
+      entry === 'react-noop-renderer' ||
+      entry === 'react-noop-renderer/persistent' ||
+      entry === 'react-test-renderer'
+    ) {
+      return 'scheduler/src/forks/SchedulerHostConfig.mock';
+    }
+    return 'scheduler/src/forks/SchedulerHostConfig.default';
   },
 
   // This logic is forked on www to ignore some warnings.
@@ -201,6 +231,19 @@ const forks = Object.freeze({
       case FB_WWW_PROD:
       case FB_WWW_PROFILING:
         return 'react/src/forks/ReactCurrentOwner.www.js';
+      default:
+        return null;
+    }
+  },
+
+  // Similarly, we preserve an inline require to ReactCurrentDispatcher.
+  // See the explanation in FB version of ReactCurrentDispatcher in www:
+  'react/src/ReactCurrentDispatcher': (bundleType, entry) => {
+    switch (bundleType) {
+      case FB_WWW_DEV:
+      case FB_WWW_PROD:
+      case FB_WWW_PROFILING:
+        return 'react/src/forks/ReactCurrentDispatcher.www.js';
       default:
         return null;
     }
@@ -267,6 +310,66 @@ const forks = Object.freeze({
     }
     throw new Error(
       'Expected ReactFiberHostConfig to always be replaced with a shim, but ' +
+        `found no mention of "${entry}" entry point in ./scripts/shared/inlinedHostConfigs.js. ` +
+        'Did you mean to add it there to associate it with a specific renderer?'
+    );
+  },
+
+  'react-stream/src/ReactFizzHostConfig': (
+    bundleType,
+    entry,
+    dependencies,
+    moduleType
+  ) => {
+    if (dependencies.indexOf('react-stream') !== -1) {
+      return null;
+    }
+    if (moduleType !== RENDERER && moduleType !== RECONCILER) {
+      return null;
+    }
+    // eslint-disable-next-line no-for-of-loops/no-for-of-loops
+    for (let rendererInfo of inlinedHostConfigs) {
+      if (rendererInfo.entryPoints.indexOf(entry) !== -1) {
+        if (!rendererInfo.isFizzSupported) {
+          return null;
+        }
+        return `react-stream/src/forks/ReactFizzHostConfig.${
+          rendererInfo.shortName
+        }.js`;
+      }
+    }
+    throw new Error(
+      'Expected ReactFizzHostConfig to always be replaced with a shim, but ' +
+        `found no mention of "${entry}" entry point in ./scripts/shared/inlinedHostConfigs.js. ` +
+        'Did you mean to add it there to associate it with a specific renderer?'
+    );
+  },
+
+  'react-stream/src/ReactFizzFormatConfig': (
+    bundleType,
+    entry,
+    dependencies,
+    moduleType
+  ) => {
+    if (dependencies.indexOf('react-stream') !== -1) {
+      return null;
+    }
+    if (moduleType !== RENDERER && moduleType !== RECONCILER) {
+      return null;
+    }
+    // eslint-disable-next-line no-for-of-loops/no-for-of-loops
+    for (let rendererInfo of inlinedHostConfigs) {
+      if (rendererInfo.entryPoints.indexOf(entry) !== -1) {
+        if (!rendererInfo.isFizzSupported) {
+          return null;
+        }
+        return `react-stream/src/forks/ReactFizzFormatConfig.${
+          rendererInfo.shortName
+        }.js`;
+      }
+    }
+    throw new Error(
+      'Expected ReactFizzFormatConfig to always be replaced with a shim, but ' +
         `found no mention of "${entry}" entry point in ./scripts/shared/inlinedHostConfigs.js. ` +
         'Did you mean to add it there to associate it with a specific renderer?'
     );

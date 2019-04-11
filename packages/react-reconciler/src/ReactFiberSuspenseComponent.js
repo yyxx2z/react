@@ -11,13 +11,10 @@ import type {Fiber} from './ReactFiber';
 import type {ExpirationTime} from './ReactFiberExpirationTime';
 
 export type SuspenseState = {|
-  timedOutAt: ExpirationTime,
+  fallbackExpirationTime: ExpirationTime,
 |};
 
-export function shouldCaptureSuspense(
-  current: Fiber | null,
-  workInProgress: Fiber,
-): boolean {
+export function shouldCaptureSuspense(workInProgress: Fiber): boolean {
   // In order to capture, the Suspense component must have a fallback prop.
   if (workInProgress.memoizedProps.fallback === undefined) {
     return false;
